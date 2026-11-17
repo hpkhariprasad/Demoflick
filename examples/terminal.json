@@ -1,0 +1,9 @@
+{
+  "title": "demoflick in the terminal",
+  "terminal": { "cwd": "..", "prompt": "demoflick" },
+  "steps": [
+    { "action": "run", "command": "ls", "caption": "Records command-line tools too" },
+    { "action": "run", "command": "node skills/demoflick/scripts/record.mjs examples/storyboard.json", "caption": "Real commands, real output" },
+    { "action": "run", "command": "ls demoflick-out", "caption": "Long waits are cut for you", "pause": 1500 }
+  ]
+}

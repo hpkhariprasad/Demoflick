@@ -1,0 +1,11 @@
+{
+  "name": "demoflick",
+  "owner": { "name": "hpkhariprasad" },
+  "plugins": [
+    {
+      "name": "demoflick",
+      "source": "./",
+      "description": "Record a polished demo video of your real app, for your README, X and Instagram Reels."
+    }
+  ]
+}

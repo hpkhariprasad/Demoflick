@@ -1,0 +1,129 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>terminal</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #14161f; overflow: hidden; }
+  #screen {
+    box-sizing: border-box; height: 100%; padding: 18px 22px; color: #d8dce8;
+    font: 17px/1.45 "JetBrains Mono", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+    white-space: pre; font-variant-ligatures: none;
+  }
+  .row { height: 1.45em; }
+  .caret { background: #d8dce8; color: #14161f; }
+</style>
+<div id="screen"></div>
+<script>
+// A small terminal: enough of the ANSI standard for ordinary command output
+// (colours, carriage returns, line erase, cursor up for spinners and progress bars).
+const PALETTE = ['#3b4252', '#f07178', '#8fd18a', '#f5c56a', '#7aa8f7', '#c58af9', '#6ad3d9', '#d8dce8',
+  '#6b7386', '#ff8b92', '#a8e6a1', '#ffd98a', '#9bbcff', '#d8a8ff', '#8be9ee', '#ffffff'];
+const term = { rows: [[]], r: 0, c: 0, style: {}, visible: 24, pending: '' };
+
+function color256(n) {
+  if (n < 16) return PALETTE[n];
+  if (n >= 232) { const v = 8 + (n - 232) * 10; return `rgb(${v},${v},${v})`; }
+  n -= 16;
+  const f = (v) => (v ? 55 + v * 40 : 0);
+  return `rgb(${f(Math.floor(n / 36))},${f(Math.floor(n / 6) % 6)},${f(n % 6)})`;
+}
+
+function sgr(params) {
+  const p = params.length ? params : [0];
+  for (let i = 0; i < p.length; i++) {
+    const n = p[i];
+    if (n === 0) term.style = {};
+    else if (n === 1) term.style = { ...term.style, bold: true };
+    else if (n === 2) term.style = { ...term.style, dim: true };
+    else if (n === 3) term.style = { ...term.style, italic: true };
+    else if (n === 4) term.style = { ...term.style, underline: true };
+    else if (n === 22) term.style = { ...term.style, bold: false, dim: false };
+    else if (n >= 30 && n <= 37) term.style = { ...term.style, fg: PALETTE[n - 30] };
+    else if (n >= 90 && n <= 97) term.style = { ...term.style, fg: PALETTE[n - 82] };
+    else if (n === 39) term.style = { ...term.style, fg: undefined };
+    else if (n >= 40 && n <= 47) term.style = { ...term.style, bg: PALETTE[n - 40] };
+    else if (n >= 100 && n <= 107) term.style = { ...term.style, bg: PALETTE[n - 92] };
+    else if (n === 49) term.style = { ...term.style, bg: undefined };
+    else if (n === 38 || n === 48) {
+      const key = n === 38 ? 'fg' : 'bg';
+      if (p[i + 1] === 5) { term.style = { ...term.style, [key]: color256(p[i + 2]) }; i += 2; }
+      else if (p[i + 1] === 2) { term.style = { ...term.style, [key]: `rgb(${p[i + 2]},${p[i + 3]},${p[i + 4]})` }; i += 4; }
+    }
+  }
+}
+
+function put(ch) {
+  const row = term.rows[term.r];
+  while (row.length < term.c) row.push({ ch: ' ', s: {} });
+  row[term.c++] = { ch, s: term.style };
+}
+
+function csi(body, final) {
+  const nums = body.replace(/^[?>]/, '').split(';').map((x) => parseInt(x, 10) || 0);
+  const n = nums[0] || 1;
+  const row = term.rows[term.r];
+  if (final === 'm') sgr(body === '' ? [] : nums);
+  else if (final === 'K') {
+    if (nums[0] === 2) { row.length = 0; } else if (nums[0] === 1) { for (let i = 0; i < term.c; i++) row[i] = { ch: ' ', s: {} }; } else row.length = Math.min(row.length, term.c);
+  } else if (final === 'A') term.r = Math.max(0, term.r - n);
+  else if (final === 'B') { term.r += n; while (term.rows.length <= term.r) term.rows.push([]); }
+  else if (final === 'C') term.c += n;
+  else if (final === 'D') term.c = Math.max(0, term.c - n);
+  else if (final === 'G') term.c = n - 1;
+  else if (final === 'J' && nums[0] >= 2) { term.rows = [[]]; term.r = 0; term.c = 0; }
+}
+
+window.termWrite = (data) => {
+  let s = term.pending + data;
+  term.pending = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '\x1b') {
+      const rest = s.slice(i);
+      let m;
+      if ((m = /^\x1b\[([0-9;?>]*)([A-Za-z])/.exec(rest))) { csi(m[1], m[2]); i += m[0].length - 1; }
+      else if ((m = /^\x1b\][^\x07\x1b]*(\x07|\x1b\\)/.exec(rest))) i += m[0].length - 1;
+      else if ((m = /^\x1b[()][A-Za-z0-9]/.exec(rest)) || (m = /^\x1b[=>78M]/.exec(rest))) i += m[0].length - 1;
+      else if (rest.length < 24) { term.pending = rest; break; } // sequence split across chunks
+    } else if (ch === '\n') {
+      term.r++; term.c = 0;
+      while (term.rows.length <= term.r) term.rows.push([]);
+    } else if (ch === '\r') term.c = 0;
+    else if (ch === '\b') term.c = Math.max(0, term.c - 1);
+    else if (ch === '\t') { do put(' '); while (term.c % 8); }
+    else if (ch >= ' ') put(ch);
+  }
+  draw();
+};
+
+window.termInit = (rows) => { term.visible = rows; draw(); };
+
+function esc(c) { return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c; }
+
+function draw() {
+  const start = Math.max(0, term.rows.length - term.visible);
+  let html = '';
+  for (let r = start; r < term.rows.length; r++) {
+    const row = term.rows[r];
+    html += '<div class="row">';
+    let run = '', cur = null;
+    const flush = () => {
+      if (!run) return;
+      const s = cur || {};
+      const css = [s.fg && `color:${s.fg}`, s.bg && `background:${s.bg}`, s.bold && 'font-weight:700',
+        s.dim && 'opacity:.6', s.italic && 'font-style:italic', s.underline && 'text-decoration:underline']
+        .filter(Boolean).join(';');
+      html += css ? `<span style="${css}">${run}</span>` : run;
+      run = '';
+    };
+    for (let c = 0; c < row.length; c++) {
+      if (row[c].s !== cur) { flush(); cur = row[c].s; }
+      run += esc(row[c].ch);
+    }
+    flush();
+    if (r === term.r) html += `<span class="caret">${row.length > term.c ? '' : ' '}</span>`;
+    html += '</div>';
+  }
+  document.getElementById('screen').innerHTML = html;
+}
+draw();
+</script>

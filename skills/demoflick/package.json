@@ -1,0 +1,20 @@
+{
+  "name": "demoflick",
+  "version": "0.1.0",
+  "description": "Record a polished demo video of a real web app from a storyboard.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "demoflick-record": "scripts/record.mjs",
+    "demoflick-render": "scripts/render.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.48.0"
+  },
+  "optionalDependencies": {
+    "ffmpeg-static": "^5.2.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

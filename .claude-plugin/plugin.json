@@ -1,0 +1,7 @@
+{
+  "name": "demoflick",
+  "version": "0.1.0",
+  "description": "Record a polished demo video of your real app: smooth cursor, automatic zoom, captions. Exports a README GIF, a 16:9 video and a 9:16 vertical video.",
+  "license": "MIT",
+  "keywords": ["demo", "video", "gif", "readme", "playwright", "reels"]
+}

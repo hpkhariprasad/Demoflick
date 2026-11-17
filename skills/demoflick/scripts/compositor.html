@@ -1,0 +1,212 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body {
+    font-family: Inter, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+    position: relative;
+  }
+  body.aurora { background: radial-gradient(120% 120% at 15% 10%, #7c5cff 0%, #3b1e9e 38%, #12103a 100%); }
+  body.sunset { background: radial-gradient(120% 120% at 15% 10%, #ffb36b 0%, #f0508a 45%, #4a1a6b 100%); }
+  body.mint   { background: radial-gradient(120% 120% at 15% 10%, #7df0c8 0%, #1f9c8f 45%, #0b3442 100%); }
+  body.slate  { background: radial-gradient(120% 120% at 15% 10%, #55627a 0%, #262d3d 50%, #0e1118 100%); }
+  #win {
+    position: absolute; border-radius: 16px; overflow: hidden; background: #fff;
+    box-shadow: 0 40px 90px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.14);
+  }
+  #bar {
+    height: 44px; background: #eceef2; display: flex; align-items: center;
+    padding: 0 18px; gap: 9px; border-bottom: 1px solid #d9dce3; overflow: hidden;
+  }
+  #bar i { width: 13px; height: 13px; border-radius: 50%; display: block; flex: none; }
+  #bar i:nth-child(1) { background: #ff5f57; }
+  #bar i:nth-child(2) { background: #febc2e; }
+  #bar i:nth-child(3) { background: #28c840; }
+  #url {
+    margin: 0 auto; transform: translateX(-30px); background: #fff; color: #5b6373;
+    font-size: 14px; padding: 5px 24px; border-radius: 8px; max-width: 60%; min-width: 0; flex: 0 1 auto;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  body.term #bar { background: #23263a; border-bottom-color: #14161f; }
+  body.term #url { background: transparent; color: #9aa3b8; font-weight: 600; }
+  body.term #view, body.term #win { background: #14161f; }
+  body.term #cursor, body.term #ripple { display: none; }
+  #view { position: relative; overflow: hidden; background: #fff; }
+  #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+  #frame { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
+  #ripple {
+    position: absolute; width: 60px; height: 60px; margin: -30px 0 0 -30px; border-radius: 50%;
+    background: rgba(124, 92, 255, .28); border: 2px solid rgba(124, 92, 255, .75); opacity: 0;
+  }
+  #cursor { position: absolute; left: 0; top: 0; width: 26px; height: 26px; transform-origin: 0 0;
+    filter: drop-shadow(0 2px 3px rgba(0,0,0,.35)); }
+  #caption {
+    position: absolute; left: 0; right: 0; text-align: center; color: #fff; opacity: 0;
+    font-weight: 600; letter-spacing: -.01em; text-shadow: 0 2px 14px rgba(0,0,0,.35);
+  }
+  #title {
+    position: absolute; left: 60px; right: 60px; text-align: center; color: #fff;
+    font-weight: 800; letter-spacing: -.03em; line-height: 1.08;
+    text-shadow: 0 4px 24px rgba(0,0,0,.3); display: none;
+  }
+</style>
+<body>
+  <div id="title"></div>
+  <div id="win">
+    <div id="bar"><i></i><i></i><i></i><span id="url"></span></div>
+    <div id="view">
+      <div id="world">
+        <img id="frame">
+        <div id="ripple"></div>
+        <svg id="cursor" viewBox="0 0 26 26"><path d="M3 2l0 19 5.2-4.6 3.3 7.4 3.3-1.5-3.3-7.3 6.9-.4z"
+          fill="#111" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      </div>
+    </div>
+  </div>
+  <div id="caption"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+let C, RW, RH, base, lastFrame = -1;
+
+const ease = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+// Index of the last item whose time is <= t.
+function at(list, t, key = 't') {
+  let lo = 0, hi = list.length - 1, ans = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid][key] <= t) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return ans;
+}
+
+window.init = (cfg) => {
+  C = cfg;
+  const { W, H, layout, timeline: tl } = cfg;
+  const vw = tl.viewport.width, vh = tl.viewport.height;
+  const isTerm = tl.chrome === 'terminal';
+  document.body.className = cfg.theme + (isTerm ? ' term' : '');
+  const hasCaptions = tl.captions.length > 0;
+  let left, top;
+  if (layout === 'vertical') {
+    $('bar').style.display = 'none';
+    const AW = W - 80, AH = Math.round(H * (tl.title ? 0.6 : 0.7));
+    const areaTop = Math.round(H * (tl.title ? 0.2 : 0.1));
+    if (vw / vh <= AW / AH) {
+      // Phone-shaped page: show all of it.
+      base = Math.min(AW / vw, AH / vh);
+      RW = Math.round(vw * base);
+      RH = Math.round(vh * base);
+    } else {
+      // Wide page: fill the frame and let the camera follow the action.
+      RW = AW;
+      RH = Math.min(AH, Math.round(AW * 1.04));
+      base = Math.max(RW / vw, RH / vh);
+    }
+    left = Math.round((W - RW) / 2);
+    top = areaTop + Math.round((AH - RH) / 2);
+    if (tl.title) {
+      const t = $('title');
+      t.textContent = tl.title;
+      t.style.display = 'block';
+      t.style.fontSize = '76px';
+      t.style.top = Math.round(H * 0.055) + 'px';
+      t.style.height = Math.round(H * 0.13) + 'px';
+      t.style.display = 'flex';
+      t.style.alignItems = 'center';
+      t.style.justifyContent = 'center';
+    }
+    $('caption').style.top = top + RH + 70 + 'px';
+    $('caption').style.fontSize = '58px';
+    $('caption').style.padding = '0 70px';
+    $('caption').style.lineHeight = '1.2';
+  } else {
+    const bar = 44, capZone = hasCaptions ? 104 : 0;
+    const maxW = W * 0.86, maxH = H - 96 - bar - capZone;
+    base = Math.min(maxW / vw, maxH / vh);
+    RW = Math.round(vw * base);
+    RH = Math.round(vh * base);
+    left = Math.round((W - RW) / 2);
+    top = Math.round((H - capZone - RH - bar) / 2);
+    $('caption').style.top = top + bar + RH + 26 + 'px';
+    $('caption').style.fontSize = '38px';
+  }
+  $('win').style.width = RW + 'px';
+  $('win').style.left = left + 'px';
+  $('win').style.top = top + 'px';
+  $('view').style.width = RW + 'px';
+  $('view').style.height = RH + 'px';
+  $('world').style.width = vw + 'px';
+  $('world').style.height = vh + 'px';
+};
+
+function camera(t) {
+  const k = C.keyframes;
+  const i = at(k, t);
+  const a = k[i], b = k[i + 1];
+  if (!b) return a;
+  const p = ease(clamp((t - a.t) / (b.t - a.t || 1), 0, 1));
+  return { cx: a.cx + (b.cx - a.cx) * p, cy: a.cy + (b.cy - a.cy) * p, z: a.z + (b.z - a.z) * p };
+}
+
+window.renderAt = async (t) => {
+  const tl = C.timeline;
+  const vw = tl.viewport.width, vh = tl.viewport.height;
+
+  const fi = at(tl.frames, t);
+  if (fi !== lastFrame) {
+    lastFrame = fi;
+    const img = $('frame');
+    img.src = C.framesUrl + tl.frames[fi].file;
+    await img.decode();
+  }
+
+  if (C.layout !== 'vertical') {
+    let url = tl.url;
+    for (const u of tl.urls || []) if (u.t <= t) url = u.url;
+    $('url').textContent = tl.chrome === 'terminal' ? url
+      : url.replace(/^https?:\/\//, '').replace(/^file:.*\//, '').replace(/\/$/, '') || 'app';
+  }
+
+  const cam = camera(t);
+  const S = base * cam.z;
+  const hw = RW / (2 * S), hh = RH / (2 * S);
+  const cx = clamp(cam.cx, hw, vw - hw), cy = clamp(cam.cy, hh, vh - hh);
+  $('world').style.transform = `translate(${RW / 2 - cx * S}px, ${RH / 2 - cy * S}px) scale(${S})`;
+
+  const cur = tl.cursor;
+  const ci = at(cur, t);
+  const a = cur[ci], b = cur[ci + 1] || a;
+  const p = b.t > a.t ? clamp((t - a.t) / (b.t - a.t), 0, 1) : 0;
+  const x = a.x + (b.x - a.x) * p, y = a.y + (b.y - a.y) * p;
+
+  let press = 1, rip = null;
+  for (const c of tl.clicks) {
+    const d = t - c.t;
+    if (d > -0.12 && d < 0.2) press = 0.82;
+    if (d >= 0 && d < 0.5) rip = { c, d };
+  }
+  // Counter-scale a little so the cursor does not balloon when zoomed in.
+  const cs = press * (1.25 / Math.sqrt(cam.z));
+  $('cursor').style.transform = `translate(${x}px, ${y}px) scale(${cs})`;
+  const r = $('ripple');
+  if (rip) {
+    const q = rip.d / 0.5;
+    r.style.left = rip.c.x + 'px';
+    r.style.top = rip.c.y + 'px';
+    r.style.transform = `scale(${0.3 + q * 1.1})`;
+    r.style.opacity = String(1 - q);
+  } else r.style.opacity = '0';
+
+  const cap = $('caption');
+  const c = tl.captions.find((c) => t >= c.t0 && t < c.t1);
+  if (c) {
+    cap.textContent = c.text;
+    const fade = 0.22;
+    cap.style.opacity = String(clamp(Math.min((t - c.t0) / fade, (c.t1 - t) / fade), 0, 1));
+  } else cap.style.opacity = '0';
+};
+</script>
+</body>

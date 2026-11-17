@@ -1,0 +1,83 @@
+{
+ "title": "Mana Pandit: your Telugu Panchangam",
+ "url": "https://www.manapandit.com/en",
+ "viewport": {
+  "width": 1280,
+  "height": 800
+ },
+ "colorScheme": "dark",
+ "setup": [
+  {
+   "action": "wait",
+   "selector": "text=Check Today's Panchangam",
+   "ms": 1500
+  }
+ ],
+ "steps": [
+  {
+   "action": "hover",
+   "selector": "nav button:has-text(\"Panchangam\")",
+   "caption": "Today's Panchangam at a glance",
+   "pause": 900
+  },
+  {
+   "action": "click",
+   "selector": "nav a[href=\"/en/panchangam\"]",
+   "zoom": false
+  },
+  {
+   "action": "wait",
+   "selector": "role=button[name=\"Next day\"]",
+   "ms": 1200
+  },
+  {
+   "action": "click",
+   "selector": "role=button[name=\"Next day\"]",
+   "caption": "Step through any date",
+   "pause": 1300
+  },
+  {
+   "action": "scroll",
+   "y": 420,
+   "pause": 1200
+  },
+  {
+   "action": "scroll",
+   "y": -420,
+   "pause": 300
+  },
+  {
+   "action": "hover",
+   "selector": "nav button:has-text(\"Panchangam\")",
+   "caption": "Every Telugu festival, dated",
+   "pause": 900
+  },
+  {
+   "action": "click",
+   "selector": "nav a[href=\"/en/festivals\"]",
+   "zoom": false
+  },
+  {
+   "action": "wait",
+   "selector": "a[href=\"/en/festivals/karthika-purnima\"]",
+   "ms": 1200
+  },
+  {
+   "action": "click",
+   "selector": "a[href=\"/en/festivals/karthika-purnima\"]",
+   "zoom": 1.3
+  },
+  {
+   "action": "wait",
+   "selector": "h1",
+   "ms": 1500
+  },
+  {
+   "action": "click",
+   "selector": "button:has-text(\"తె\")",
+   "caption": "Switch to Telugu in one click",
+   "pause": 2200
+  }
+ ],
+ "scale": 1
+}
