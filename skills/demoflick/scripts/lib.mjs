@@ -1,7 +1,8 @@
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
-
-const require = createRequire(import.meta.url);
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -10,23 +11,38 @@ export function die(msg) {
   process.exit(1);
 }
 
-export function loadPlaywright() {
-  try {
-    return require('playwright');
-  } catch {
-    die('demoflick: Playwright is not installed.\n' +
-      '  Run in the skill folder: npm install && npx playwright install chromium');
+// Plugin managers replace the skill folder on update, so dependencies live in
+// a stable folder of their own. setup.mjs installs them there.
+export const depsDir = process.env.DEMOFLICK_HOME
+  || path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'demoflick');
+
+const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
+const SETUP = `node "${path.join(scriptsDir, 'setup.mjs')}"`;
+
+// Look next to the skill, in the shared deps folder, then in the user's project.
+function load(name) {
+  const bases = [import.meta.url, path.join(depsDir, 'package.json'), path.join(process.cwd(), 'package.json')];
+  for (const base of bases) {
+    try {
+      return createRequire(base)(name);
+    } catch (err) {
+      if (err.code !== 'MODULE_NOT_FOUND') throw err;
+    }
   }
+  return null;
+}
+
+export function loadPlaywright() {
+  const pw = load('playwright');
+  if (!pw) die(`demoflick: Playwright is not installed. Run once:\n  ${SETUP}`);
+  return pw;
 }
 
 export function ffmpegPath() {
   if (spawnSync('ffmpeg', ['-version']).status === 0) return 'ffmpeg';
-  try {
-    return require('ffmpeg-static');
-  } catch {
-    die('demoflick: ffmpeg not found.\n' +
-      '  Install ffmpeg, or run in the skill folder: npm install ffmpeg-static');
-  }
+  const bundled = load('ffmpeg-static');
+  if (bundled) return bundled;
+  die(`demoflick: ffmpeg not found. Install ffmpeg, or run once:\n  ${SETUP}`);
 }
 
 export function parseArgs(argv) {

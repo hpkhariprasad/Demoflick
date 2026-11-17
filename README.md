@@ -39,21 +39,27 @@ Then ask:
 The agent starts your app, finds the flow, writes a storyboard, records it,
 checks the result and hands you the files.
 
+The first run installs Playwright and a Chromium browser (about 150 MB) into
+`~/.cache/demoflick`. You need Node 18 or later. ffmpeg is used if you have it;
+otherwise a bundled copy is downloaded.
+
 For other agents that support the Agent Skills format (Codex, Cursor, Gemini
 CLI), copy `skills/demoflick` into the agent's skills folder.
 
 ## Use it without an agent
 
-You need Node 18+, ffmpeg and Playwright.
+You need Node 18 or later.
 
 ```bash
 git clone https://github.com/hpkhariprasad/demoflick
-cd demoflick/skills/demoflick
-npm install && npx playwright install chromium
+cd demoflick
+node skills/demoflick/scripts/setup.mjs   # once
 
-node scripts/record.mjs ../../examples/storyboard.json --out demoflick-out
-node scripts/render.mjs demoflick-out
+node skills/demoflick/scripts/record.mjs examples/storyboard.json
+node skills/demoflick/scripts/render.mjs
 ```
+
+The videos land in `demoflick-out/`.
 
 ## How it works
 

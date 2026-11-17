@@ -10,9 +10,11 @@ terminal, and renders a finished demo. The recording is driven from a
 storyboard you write, so the result is repeatable: change a step,
 run again, get a new video.
 
-Scripts live in `scripts/` next to this file. They need Node 18+, Playwright and
-ffmpeg. If a script reports one missing, run `npm install` in this skill folder
-(then `npx playwright install chromium` if the browser is missing).
+Scripts live in `scripts/` next to this file. They need Node 18+, Playwright
+with Chromium, and ffmpeg. If a script reports one missing, run
+`node scripts/setup.mjs` once. It installs them into `~/.cache/demoflick`, so
+they survive plugin updates; it downloads about 150 MB, so tell the user before
+running it.
 
 ## Workflow
 
