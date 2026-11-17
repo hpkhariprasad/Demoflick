@@ -14,7 +14,15 @@ const args = parseArgs(process.argv.slice(2));
 const storyboardPath = args._[0];
 if (!storyboardPath) die('usage: node record.mjs storyboard.json [--out dir]');
 
-const board = JSON.parse(fs.readFileSync(storyboardPath, 'utf8'));
+// "${env:NAME}" anywhere in the storyboard reads an environment variable, so
+// passwords and tokens never have to be written into the file.
+const board = JSON.parse(fs.readFileSync(storyboardPath, 'utf8'), (key, value) => {
+  if (typeof value !== 'string') return value;
+  return value.replace(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name) => {
+    if (process.env[name] === undefined) die(`demoflick: environment variable ${name} is not set (used in "${key}")`);
+    return process.env[name];
+  });
+});
 const boardDir = path.dirname(path.resolve(storyboardPath));
 const outDir = path.resolve(args.out || 'demoflick-out');
 const rawDir = path.join(outDir, 'raw');
@@ -52,11 +60,30 @@ const browser = await chromium.launch({
   args: [`--force-device-scale-factor=${DPR}`],
   executablePath: process.env.DEMOFLICK_CHROMIUM || undefined,
 });
+const sessionFile = board.session ? path.resolve(boardDir, board.session) : null;
 const context = await browser.newContext({
   viewport: { width: vw, height: vh },
   deviceScaleFactor: DPR,
   colorScheme: board.colorScheme || 'light',
+  // A saved sign-in (cookies and local storage) from save-session.mjs or "saveSession".
+  storageState: sessionFile && fs.existsSync(sessionFile) ? sessionFile : undefined,
 });
+if (sessionFile && !fs.existsSync(sessionFile) && !board.saveSession) {
+  console.log(`note: session file ${board.session} not found; recording signed out`);
+}
+// Blur anything that must not appear in a public video, on every page.
+if (board.redact?.length) {
+  const css = `${board.redact.join(',\n')} { filter: blur(9px) !important; }`;
+  await context.addInitScript((rule) => {
+    const add = () => {
+      const style = document.createElement('style');
+      style.dataset.demoflick = 'redact';
+      style.textContent = rule;
+      (document.head || document.documentElement).appendChild(style);
+    };
+    if (document.documentElement) add(); else document.addEventListener('DOMContentLoaded', add);
+  }, css);
+}
 const page = await context.newPage();
 
 let t0 = null;
@@ -73,6 +100,9 @@ const timeline = {
   clicks: [],
   focus: [],
   captions: [],
+  keys: [],
+  intro: board.intro || null,
+  outro: board.outro || null,
 };
 const mouse = { x: vw * 0.62, y: vh * 0.58 };
 const writes = [];
@@ -127,25 +157,45 @@ async function clickAt(x, y) {
   return t;
 }
 
+const redactText = (term?.redact || []).map((r) => new RegExp(r, 'g'));
 const termWrite = (data) => page.evaluate((d) => window.termWrite(d), data);
 
 // Type a command into the terminal, run it for real, and stream its output in as it arrives.
 async function runCommand(step) {
   if (!term) throw new Error('"run" needs a top-level "terminal" section in the storyboard');
-  for (const ch of step.command) {
+  // The command runs as written but is shown with secrets masked.
+  let shown = step.command;
+  for (const re of redactText) shown = shown.replace(re, (m) => '•'.repeat(Math.min(m.length, 12)));
+  for (const ch of shown) {
     await termWrite(ch);
     if (recording) await sleep(30 + rand() * 50);
   }
   if (recording) await sleep(350);
   await termWrite('\r\n');
+  if (step.output !== undefined) {
+    // Shown, not run: print the given output line by line, for steps that must not execute.
+    for (const line of String(step.output).split('\n')) {
+      await termWrite(line.replace(/\\u001b|\\x1b/g, '\x1b') + '\r\n');
+      if (recording) await sleep(step.lineDelay ?? 140);
+    }
+    await termWrite(term.promptText);
+    return;
+  }
   const env = { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1', CLICOLOR_FORCE: '1',
     COLUMNS: String(term.cols), LINES: String(term.rows) };
   // `script` gives the command a real terminal, so tools keep their colours and progress bars.
+  // Windows has no `script`: run through the default shell, where tools may drop colours.
   const sized = `stty cols ${term.cols} rows ${term.rows} 2>/dev/null; ${step.command}`;
-  const hasScript = spawnSync('script', ['--version']).status === 0 || process.platform === 'darwin';
-  const child = !hasScript ? spawn('sh', ['-c', step.command], { cwd: term.cwd, env })
-    : process.platform === 'darwin' ? spawn('script', ['-q', '/dev/null', 'sh', '-c', sized], { cwd: term.cwd, env })
-    : spawn('script', ['-qfec', sized, '/dev/null'], { cwd: term.cwd, env });
+  let child;
+  if (process.platform === 'win32') {
+    child = spawn(step.command, { cwd: term.cwd, env, shell: true, windowsHide: true });
+  } else if (process.platform === 'darwin') {
+    child = spawn('script', ['-q', '/dev/null', 'sh', '-c', sized], { cwd: term.cwd, env });
+  } else if (spawnSync('script', ['--version']).status === 0) {
+    child = spawn('script', ['-qfec', sized, '/dev/null'], { cwd: term.cwd, env });
+  } else {
+    child = spawn('sh', ['-c', step.command], { cwd: term.cwd, env });
+  }
   let tail = '', chain = Promise.resolve();
   let lastOutput = performance.now();
   const IDLE = 1500;
@@ -157,7 +207,8 @@ async function runCommand(step) {
   };
   const feed = (buf) => {
     cutIdle();
-    const text = buf.toString('utf8');
+    let text = buf.toString('utf8');
+    for (const re of redactText) text = text.replace(re, (m) => '•'.repeat(Math.min(m.length, 12)));
     tail = (tail + text).slice(-4);
     chain = chain.then(() => termWrite(text)).catch(() => {});
   };
@@ -206,6 +257,7 @@ async function run(step) {
       break;
     }
     case 'press':
+      if (recording && step.showKey !== false) timeline.keys.push({ t: now(), key: step.key });
       await page.keyboard.press(step.key);
       break;
     case 'hover': {
@@ -259,6 +311,13 @@ try {
   for (const [i, step] of setup.entries()) {
     stepLabel = `setup step ${i} (${step.action} ${step.selector || step.url || ''})`;
     await run(step);
+  }
+  if (board.saveSession) {
+    // Keep the sign-in from setup so later recordings can skip it with "session".
+    const file = path.resolve(boardDir, board.saveSession);
+    await context.storageState({ path: file });
+    fs.chmodSync(file, 0o600);
+    console.log(`saved session -> ${path.relative(process.cwd(), file) || file} (keep it out of git)`);
   }
   await page.mouse.move(mouse.x, mouse.y);
   if (term) {

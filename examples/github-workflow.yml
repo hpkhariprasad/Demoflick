@@ -1,0 +1,34 @@
+# Copy to .github/workflows/demo.yml in your repository.
+# Re-records the README demo when the app's code changes on main.
+# Each recording differs slightly, so list only the paths that change what the
+# demo shows; otherwise every push commits a new GIF.
+name: Update demo
+
+on:
+  push:
+    branches: [main]
+    paths: ['src/**', 'demo/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - uses: hpkhariprasad/demoflick@main
+        with:
+          storyboard: demo/storyboard.json
+          start: npm run dev
+          wait-for: http://localhost:3000
+          gif-path: assets/demo.gif
+          commit: 'true'
+        env:
+          # Secrets used as ${env:DEMO_PASSWORD} in the storyboard.
+          DEMO_PASSWORD: ${{ secrets.DEMO_PASSWORD }}

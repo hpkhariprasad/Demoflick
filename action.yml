@@ -1,0 +1,107 @@
+name: demoflick
+description: Record a demo video or GIF of your web app or CLI from a storyboard, and keep your README demo up to date.
+author: Hariprasad Kasavajjala
+branding:
+  icon: film
+  color: purple
+
+inputs:
+  storyboard:
+    description: Path to the storyboard JSON file.
+    required: true
+  start:
+    description: Command that starts your app in the background, for example "npm run dev". Leave empty for a live URL or a CLI demo.
+    default: ''
+  wait-for:
+    description: URL to wait for after starting the app, before recording.
+    default: ''
+  wait-timeout:
+    description: Seconds to wait for the URL to respond.
+    default: '120'
+  formats:
+    description: Comma-separated outputs from landscape, vertical, square, gif.
+    default: gif
+  theme:
+    description: Background theme (aurora, sunset, mint, slate).
+    default: aurora
+  output:
+    description: Folder for the recording and videos.
+    default: demoflick-out
+  gif-path:
+    description: Copy the GIF here (for example assets/demo.gif) so the README can show it.
+    default: ''
+  commit:
+    description: Commit and push the file at gif-path when it changed. Needs "contents write" permission.
+    default: 'false'
+
+outputs:
+  output:
+    description: Folder that holds the videos.
+    value: ${{ inputs.output }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Playwright, Chromium and ffmpeg
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/skills/demoflick/scripts/setup.mjs" --with-deps
+
+    - name: Start the app
+      if: inputs.start != ''
+      shell: bash
+      env:
+        START: ${{ inputs.start }}
+        WAIT_FOR: ${{ inputs.wait-for }}
+        WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
+      run: |
+        log="$RUNNER_TEMP/demoflick-app.log"
+        nohup bash -c "$START" > "$log" 2>&1 &
+        if [ -n "$WAIT_FOR" ]; then
+          for i in $(seq 1 "$WAIT_TIMEOUT"); do
+            if curl -fs -o /dev/null "$WAIT_FOR"; then echo "App is up after ${i}s"; exit 0; fi
+            sleep 1
+          done
+          echo "::error::$WAIT_FOR did not respond within ${WAIT_TIMEOUT}s"
+          tail -n 50 "$log"
+          exit 1
+        fi
+
+    - name: Record
+      shell: bash
+      env:
+        STORYBOARD: ${{ inputs.storyboard }}
+        OUT: ${{ inputs.output }}
+      run: node "$GITHUB_ACTION_PATH/skills/demoflick/scripts/record.mjs" "$STORYBOARD" --out "$OUT"
+
+    - name: Render
+      shell: bash
+      env:
+        OUT: ${{ inputs.output }}
+        FORMATS: ${{ inputs.formats }}
+        THEME: ${{ inputs.theme }}
+      run: node "$GITHUB_ACTION_PATH/skills/demoflick/scripts/render.mjs" "$OUT" --formats "$FORMATS" --theme "$THEME"
+
+    - name: Copy the GIF
+      if: inputs.gif-path != ''
+      shell: bash
+      env:
+        OUT: ${{ inputs.output }}
+        GIF_PATH: ${{ inputs.gif-path }}
+      run: |
+        if [ ! -f "$OUT/demo.gif" ]; then echo "::error::No GIF was made; add gif to formats"; exit 1; fi
+        mkdir -p "$(dirname "$GIF_PATH")"
+        cp "$OUT/demo.gif" "$GIF_PATH"
+        rm -rf "$OUT/raw"
+
+    - name: Commit the GIF
+      if: inputs.commit == 'true' && inputs.gif-path != ''
+      shell: bash
+      env:
+        GIF_PATH: ${{ inputs.gif-path }}
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add "$GIF_PATH"
+        if git diff --cached --quiet; then echo "Demo GIF unchanged"; exit 0; fi
+        git commit -m "Update demo GIF"
+        git push

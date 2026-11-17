@@ -1,0 +1,12 @@
+{
+  "title": "CI web test",
+  "url": "../examples/sample-app/index.html",
+  "redact": [".tag"],
+  "intro": { "title": "CI", "duration": 1 },
+  "steps": [
+    { "action": "type", "selector": "#new", "text": "From CI", "caption": "Typing" },
+    { "action": "press", "key": "Enter" },
+    { "action": "click", "selector": "li:nth-child(1) .check", "caption": "Clicking" },
+    { "action": "scroll", "y": 200 }
+  ]
+}
