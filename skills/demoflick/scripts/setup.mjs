@@ -2,7 +2,9 @@
 // demoflick setup: install Playwright, its Chromium and (if needed) ffmpeg
 // into a folder that survives plugin updates. Safe to run again.
 //
-//   node setup.mjs
+//   node setup.mjs [--with-deps]
+//
+// --with-deps also installs Chromium's system libraries (Linux, needs sudo); CI uses it.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,6 +35,8 @@ run(`installing ${deps.join(', ')} into ${depsDir}`, npm, ['install', '--no-audi
 if (process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD) {
   console.log('demoflick: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD is set, so Chromium was not downloaded.');
 } else {
-  run('downloading Chromium for Playwright', process.execPath, [path.join(depsDir, 'node_modules', 'playwright', 'cli.js'), 'install', 'chromium']);
+  const withDeps = process.argv.includes('--with-deps') ? ['--with-deps'] : [];
+  run('downloading Chromium for Playwright', process.execPath,
+    [path.join(depsDir, 'node_modules', 'playwright', 'cli.js'), 'install', ...withDeps, 'chromium']);
 }
 console.log(`demoflick: ready${hasFfmpeg ? '' : ' (using a bundled ffmpeg)'}`);

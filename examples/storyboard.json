@@ -2,9 +2,11 @@
   "title": "Tidy: tasks, done fast",
   "url": "./sample-app/index.html",
   "viewport": { "width": 1280, "height": 800 },
+  "intro": { "title": "Tidy", "subtitle": "A to-do list that stays out of your way" },
+  "outro": { "title": "Made with demoflick", "subtitle": "github.com/hpkhariprasad/demoflick" },
   "steps": [
     { "action": "type", "selector": "#new", "text": "Record a demo with demoflick", "caption": "Add a task in seconds" },
-    { "action": "click", "selector": "#add" },
+    { "action": "press", "key": "Enter" },
     { "action": "click", "selector": "li:nth-child(1) .check", "caption": "Tick it off when it's done" },
     { "action": "click", "selector": "li:nth-child(3) .check" },
     { "action": "click", "selector": "#tabs button[data-f=open]", "caption": "Filter to what's left" },

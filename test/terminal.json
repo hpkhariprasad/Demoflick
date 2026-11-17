@@ -1,0 +1,8 @@
+{
+  "title": "CI terminal test",
+  "terminal": { "cwd": "..", "prompt": "ci", "redact": ["sk-[a-z0-9]+"] },
+  "steps": [
+    { "action": "run", "command": "node --version", "caption": "A real command" },
+    { "action": "run", "command": "node -e \"console.log('\\u001b[32mgreen\\u001b[0m and a key sk-abc123')\"" }
+  ]
+}

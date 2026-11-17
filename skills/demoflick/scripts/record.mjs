@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadPlaywright, parseArgs, sleep, die } from './lib.mjs';
 
@@ -14,7 +14,15 @@ const args = parseArgs(process.argv.slice(2));
 const storyboardPath = args._[0];
 if (!storyboardPath) die('usage: node record.mjs storyboard.json [--out dir]');
 
-const board = JSON.parse(fs.readFileSync(storyboardPath, 'utf8'));
+// "${env:NAME}" anywhere in the storyboard reads an environment variable, so
+// passwords and tokens never have to be written into the file.
+const board = JSON.parse(fs.readFileSync(storyboardPath, 'utf8'), (key, value) => {
+  if (typeof value !== 'string') return value;
+  return value.replace(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name) => {
+    if (process.env[name] === undefined) die(`demoflick: environment variable ${name} is not set (used in "${key}")`);
+    return process.env[name];
+  });
+});
 const boardDir = path.dirname(path.resolve(storyboardPath));
 const outDir = path.resolve(args.out || 'demoflick-out');
 const rawDir = path.join(outDir, 'raw');
@@ -52,11 +60,30 @@ const browser = await chromium.launch({
   args: [`--force-device-scale-factor=${DPR}`],
   executablePath: process.env.DEMOFLICK_CHROMIUM || undefined,
 });
+const sessionFile = board.session ? path.resolve(boardDir, board.session) : null;
 const context = await browser.newContext({
   viewport: { width: vw, height: vh },
   deviceScaleFactor: DPR,
   colorScheme: board.colorScheme || 'light',
+  // A saved sign-in (cookies and local storage) from save-session.mjs or "saveSession".
+  storageState: sessionFile && fs.existsSync(sessionFile) ? sessionFile : undefined,
 });
+if (sessionFile && !fs.existsSync(sessionFile) && !board.saveSession) {
+  console.log(`note: session file ${board.session} not found; recording signed out`);
+}
+// Blur anything that must not appear in a public video, on every page.
+if (board.redact?.length) {
+  const css = `${board.redact.join(',\n')} { filter: blur(9px) !important; }`;
+  await context.addInitScript((rule) => {
+    const add = () => {
+      const style = document.createElement('style');
+      style.dataset.demoflick = 'redact';
+      style.textContent = rule;
+      (document.head || document.documentElement).appendChild(style);
+    };
+    if (document.documentElement) add(); else document.addEventListener('DOMContentLoaded', add);
+  }, css);
+}
 const page = await context.newPage();
 
 let t0 = null;
@@ -73,6 +100,9 @@ const timeline = {
   clicks: [],
   focus: [],
   captions: [],
+  keys: [],
+  intro: board.intro || null,
+  outro: board.outro || null,
 };
 const mouse = { x: vw * 0.62, y: vh * 0.58 };
 const writes = [];
@@ -127,26 +157,73 @@ async function clickAt(x, y) {
   return t;
 }
 
+const redactText = (term?.redact || []).map((r) => new RegExp(r, 'g'));
 const termWrite = (data) => page.evaluate((d) => window.termWrite(d), data);
 
 // Type a command into the terminal, run it for real, and stream its output in as it arrives.
+// How to run a command so it sees a terminal (and keeps colours and progress
+// bars): `script` on Linux and macOS, the default shell on Windows. Each
+// wrapper is tried once; if it does not work on this machine (macOS `script`
+// can refuse to start without an interactive terminal, as in CI), plain `sh` is used.
+let terminalWrapper;
+const wrappers = {
+  linux: (cmd) => ['script', ['-qfec', cmd, '/dev/null']],
+  darwin: (cmd) => ['script', ['-q', '/dev/null', 'sh', '-c', cmd]],
+  sh: (cmd) => ['sh', ['-c', cmd]],
+};
+function trySpawn(wrap, cmd, env) {
+  const [bin, binArgs] = wrap(cmd);
+  return spawn(bin, binArgs, { cwd: term.cwd, env });
+}
+async function pickWrapper(env) {
+  const candidate = process.platform === 'darwin' ? 'darwin' : 'linux';
+  const ok = await new Promise((resolve) => {
+    let out = '';
+    const child = trySpawn(wrappers[candidate], 'echo demoflick-ok', env);
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', () => {});
+    child.on('error', () => resolve(false));
+    child.on('close', (code) => resolve(code === 0 && out.includes('demoflick-ok')));
+    setTimeout(() => { child.kill('SIGKILL'); resolve(false); }, 5000);
+  });
+  if (!ok) console.log('note: no terminal wrapper on this machine; some tools may print without colours');
+  return ok ? candidate : 'sh';
+}
+async function spawnInTerminal(command, env) {
+  if (process.platform === 'win32') {
+    // Windows has no `script`: run through the default shell, where tools may drop colours.
+    return spawn(command, { cwd: term.cwd, env, shell: true, windowsHide: true });
+  }
+  terminalWrapper ??= await pickWrapper(env);
+  const sized = terminalWrapper === 'sh' ? command : `stty cols ${term.cols} rows ${term.rows} 2>/dev/null; ${command}`;
+  return trySpawn(wrappers[terminalWrapper], sized, env);
+}
+
 async function runCommand(step) {
   if (!term) throw new Error('"run" needs a top-level "terminal" section in the storyboard');
-  for (const ch of step.command) {
+  // The command runs as written but is shown with secrets masked.
+  let shown = step.command;
+  for (const re of redactText) shown = shown.replace(re, (m) => '•'.repeat(Math.min(m.length, 12)));
+  for (const ch of shown) {
     await termWrite(ch);
     if (recording) await sleep(30 + rand() * 50);
   }
   if (recording) await sleep(350);
   await termWrite('\r\n');
+  if (step.output !== undefined) {
+    // Shown, not run: print the given output line by line, for steps that must not execute.
+    for (const line of String(step.output).split('\n')) {
+      await termWrite(line.replace(/\\u001b|\\x1b/g, '\x1b') + '\r\n');
+      if (recording) await sleep(step.lineDelay ?? 140);
+    }
+    await termWrite(term.promptText);
+    return;
+  }
   const env = { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1', CLICOLOR_FORCE: '1',
     COLUMNS: String(term.cols), LINES: String(term.rows) };
   // `script` gives the command a real terminal, so tools keep their colours and progress bars.
-  const sized = `stty cols ${term.cols} rows ${term.rows} 2>/dev/null; ${step.command}`;
-  const hasScript = spawnSync('script', ['--version']).status === 0 || process.platform === 'darwin';
-  const child = !hasScript ? spawn('sh', ['-c', step.command], { cwd: term.cwd, env })
-    : process.platform === 'darwin' ? spawn('script', ['-q', '/dev/null', 'sh', '-c', sized], { cwd: term.cwd, env })
-    : spawn('script', ['-qfec', sized, '/dev/null'], { cwd: term.cwd, env });
-  let tail = '', chain = Promise.resolve();
+  const child = await spawnInTerminal(step.command, env);
+  let tail = '', output = '', chain = Promise.resolve();
   let lastOutput = performance.now();
   const IDLE = 1500;
   // Waiting on a silent command is dead air: cut any silence down to 1.5 seconds.
@@ -157,8 +234,10 @@ async function runCommand(step) {
   };
   const feed = (buf) => {
     cutIdle();
-    const text = buf.toString('utf8');
+    let text = buf.toString('utf8');
+    for (const re of redactText) text = text.replace(re, (m) => '•'.repeat(Math.min(m.length, 12)));
     tail = (tail + text).slice(-4);
+    output = (output + text).slice(-2000);
     chain = chain.then(() => termWrite(text)).catch(() => {});
   };
   child.stdout.on('data', feed);
@@ -171,7 +250,11 @@ async function runCommand(step) {
   });
   cutIdle();
   await chain;
-  if (code !== 0 && !step.allowFail) throw new Error(`command exited with code ${code}: ${step.command}`);
+  if (code !== 0 && !step.allowFail) {
+    // eslint-disable-next-line no-control-regex
+    const last = output.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\r/g, '').trim().split('\n').slice(-8).join('\n    ');
+    throw new Error(`command exited with code ${code}: ${step.command}` + (last ? `\n  its last output:\n    ${last}` : ''));
+  }
   await termWrite((tail && !tail.endsWith('\n') ? '\r\n' : '') + term.promptText);
 }
 
@@ -206,6 +289,7 @@ async function run(step) {
       break;
     }
     case 'press':
+      if (recording && step.showKey !== false) timeline.keys.push({ t: now(), key: step.key });
       await page.keyboard.press(step.key);
       break;
     case 'hover': {
@@ -257,8 +341,15 @@ try {
   // Setup runs before the camera rolls: sign-in, seeding data, navigation.
   const setup = [{ action: 'goto', url: board.url }, ...(board.setup || [])];
   for (const [i, step] of setup.entries()) {
-    stepLabel = `setup step ${i} (${step.action} ${step.selector || step.url || ''})`;
+    stepLabel = `setup step ${i} (${step.action} ${step.selector || step.url || step.command || ''})`;
     await run(step);
+  }
+  if (board.saveSession) {
+    // Keep the sign-in from setup so later recordings can skip it with "session".
+    const file = path.resolve(boardDir, board.saveSession);
+    await context.storageState({ path: file });
+    fs.chmodSync(file, 0o600);
+    console.log(`saved session -> ${path.relative(process.cwd(), file) || file} (keep it out of git)`);
   }
   await page.mouse.move(mouse.x, mouse.y);
   if (term) {
@@ -291,7 +382,7 @@ try {
   await sleep(board.leadIn ?? 700);
 
   for (const [i, step] of board.steps.entries()) {
-    stepLabel = `step ${i} (${step.action} ${step.selector || step.url || ''})`;
+    stepLabel = `step ${i} (${step.action} ${step.selector || step.url || step.command || ''})`;
     if (step.caption !== undefined) setCaption(step.caption);
     await run(step);
   }
@@ -308,7 +399,10 @@ try {
   const shot = path.join(outDir, 'failure.png');
   await page.screenshot({ path: shot }).catch(() => {});
   await browser.close();
-  die(`demoflick: failed at ${stepLabel}\n  ${err.message.split('\n')[0]}\n  screenshot: ${shot}`);
+  // Playwright errors carry long call logs after the first line; our own errors are short.
+  const lines = err.message.split('\n');
+  const msg = lines[0].startsWith('command exited') ? lines.join('\n') : lines[0];
+  die(`demoflick: failed at ${stepLabel}\n  ${msg}\n  screenshot: ${shot}`);
 }
 
 await browser.close();

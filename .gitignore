@@ -1,2 +1,4 @@
 node_modules/
 demoflick-out/
+evals/results/
+session*.json
