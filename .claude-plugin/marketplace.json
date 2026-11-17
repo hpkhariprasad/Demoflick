@@ -1,11 +1,18 @@
 {
   "name": "demoflick",
-  "owner": { "name": "hpkhariprasad" },
+  "description": "demoflick: record polished demo videos of your web app or command-line tool.",
+  "owner": {
+    "name": "Hariprasad Kasavajjala",
+    "url": "https://github.com/hpkhariprasad"
+  },
   "plugins": [
     {
       "name": "demoflick",
       "source": "./",
-      "description": "Record a polished demo video of your real app, for your README, X and Instagram Reels."
+      "description": "Record a polished demo video of your real app, for your README, X and Instagram Reels.",
+      "author": {
+        "name": "Hariprasad Kasavajjala"
+      }
     }
   ]
 }
