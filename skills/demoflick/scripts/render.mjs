@@ -61,6 +61,12 @@ function run(cmdArgs) {
   if (r.status !== 0) die('demoflick: ffmpeg failed');
 }
 
+// Paths inside the current folder print short; others print in full.
+const shown = (p) => {
+  const rel = path.relative(process.cwd(), p);
+  return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : p;
+};
+
 const SIZES = { landscape: [1920, 1080], vertical: [1080, 1920], square: [1080, 1080] };
 const introD = tl.intro ? (tl.intro.duration ?? 2.2) : 0;
 const outroD = tl.outro ? (tl.outro.duration ?? 2.8) : 0;
@@ -116,7 +122,7 @@ async function renderVideo(browser, layout, outFile) {
   } finally {
     for (const p of parts) fs.rmSync(p.file, { force: true });
   }
-  process.stdout.write(`\r  ${layout}: done -> ${outFile}\n`);
+  process.stdout.write(`\r  ${layout}: done -> ${shown(outFile)}\n`);
 }
 
 function contactSheet(video, out) {
@@ -151,6 +157,6 @@ if (formats.includes('gif')) {
     `fps=15,scale=${width}:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=256:stats_mode=full[p];` +
     '[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle', gif]);
   const mb = fs.statSync(gif).size / 1e6;
-  console.log(`  gif: done -> ${gif} (${mb.toFixed(1)} MB)`);
+  console.log(`  gif: done -> ${shown(gif)} (${mb.toFixed(1)} MB)`);
   if (mb > 10) console.log('  note: over 10 MB; shorten the storyboard or pass --gif-width 720');
 }
